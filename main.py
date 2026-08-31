@@ -657,9 +657,9 @@ if not _NEXUS_X402_FREE_MODE:
 )
 async def extract_pdf_to_json_endpoint(payload: ExtractPdfRequest) -> dict:
     """Extract text, tables (per page), page count and metadata from a PDF.
-    Payment settles BEFORE this handler runs, at the ASGI middleware layer
-    ahead of request validation -- a call is charged even if it 400s
-    (invalid base64/oversized upload) or 504s (processing timeout)."""
+    A 400 (invalid base64/oversized upload) or 504 (processing timeout) raised here is NOT
+    charged -- corrected 2026-08-31, see main NEXUS repo CLAUDE.md SS8: x402's
+    PaymentMiddlewareASGI only settles after a <400 response, verified empirically."""
     raw = _decode_upload(payload.file_base64)
     return await _run_cpu_bound(_extract_pdf_sync, raw, payload.max_pages)
 
@@ -673,7 +673,7 @@ async def extract_pdf_to_json_endpoint(payload: ExtractPdfRequest) -> dict:
 )
 async def extract_docx_to_json_endpoint(payload: ExtractDocxRequest) -> dict:
     """Extract paragraphs (with heading levels/styles) and tables from a .docx.
-    Same payment-before-validation disclosure as /extract-pdf-to-json."""
+    Same not-charged-on-failure correction as /extract-pdf-to-json (2026-08-31)."""
     raw = _decode_upload(payload.file_base64)
     _check_zip_bomb_safe(raw)
     return await _run_cpu_bound(_extract_docx_sync, raw)
@@ -688,7 +688,7 @@ async def extract_docx_to_json_endpoint(payload: ExtractDocxRequest) -> dict:
 )
 async def extract_xlsx_to_json_endpoint(payload: ExtractXlsxRequest) -> dict:
     """Extract per-sheet cell grids from an .xlsx, capped rows/cols per sheet.
-    Same payment-before-validation disclosure as /extract-pdf-to-json."""
+    Same not-charged-on-failure correction as /extract-pdf-to-json (2026-08-31)."""
     raw = _decode_upload(payload.file_base64)
     _check_zip_bomb_safe(raw)
     return await _run_cpu_bound(_extract_xlsx_sync, raw, payload.max_rows_per_sheet, payload.max_cols_per_sheet)
@@ -703,8 +703,8 @@ async def extract_xlsx_to_json_endpoint(payload: ExtractXlsxRequest) -> dict:
 )
 async def generate_pdf_from_json_endpoint(payload: GenerateDocRequest) -> dict:
     """Generate a PDF from structured blocks (heading/paragraph/table). Returns
-    base64-encoded PDF bytes. Same payment-before-validation disclosure as
-    /extract-pdf-to-json -- a 422 (malformed blocks) is still charged."""
+    base64-encoded PDF bytes. Same not-charged-on-failure correction as
+    /extract-pdf-to-json (2026-08-31) -- a 422 (malformed blocks) is NOT charged either."""
     pdf_bytes = await _run_cpu_bound(_generate_pdf_sync, payload.title, [b.model_dump() for b in payload.blocks])
     return {"file_base64": base64.b64encode(pdf_bytes).decode("ascii"), "byte_size": len(pdf_bytes)}
 
@@ -718,8 +718,8 @@ async def generate_pdf_from_json_endpoint(payload: GenerateDocRequest) -> dict:
 )
 async def generate_docx_from_json_endpoint(payload: GenerateDocRequest) -> dict:
     """Generate a .docx from structured blocks (heading/paragraph/table). Returns
-    base64-encoded docx bytes. Same payment-before-validation disclosure as
-    /extract-pdf-to-json."""
+    base64-encoded docx bytes. Same not-charged-on-failure correction as
+    /extract-pdf-to-json (2026-08-31)."""
     docx_bytes = await _run_cpu_bound(_generate_docx_sync, payload.title, [b.model_dump() for b in payload.blocks])
     return {"file_base64": base64.b64encode(docx_bytes).decode("ascii"), "byte_size": len(docx_bytes)}
 
@@ -805,11 +805,10 @@ async def agent_card() -> dict:
                 "This service implements the Model Context Protocol (MCP) at /mcp, not A2A's "
                 "own task methods. Every business POST route is charged via x402 (Base Sepolia "
                 "TESTNET, not real funds): $0.02 for PDF operations (extract/generate), $0.01 "
-                "for docx/xlsx operations. Payment settles BEFORE the handler runs, at the ASGI "
-                "middleware layer ahead of request validation: a call is charged even if it "
-                "returns a 400 (invalid/oversized/zip-bomb-rejected upload), 422 (malformed "
-                "generate blocks), or 504 (processing timeout). The MCP tool surface at /mcp is "
-                "currently free (in-process call, not re-metered)."
+                "for docx/xlsx operations. Payment only settles after a successful (<400) "
+                "response: a call that returns 400 (invalid/oversized/zip-bomb-rejected upload), "
+                "422 (malformed generate blocks), or 504 (processing timeout) is NOT charged. The "
+                "MCP tool surface at /mcp is currently free (in-process call, not re-metered)."
             ),
         },
     }
